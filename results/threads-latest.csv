@@ -1,0 +1,6 @@
+workers,elapsed_ms,throughput_mops,speedup,atomic_total,racy_total,atomic_correct,racy_correct
+1,109.561,36.5092,0.8946,283146,283146,true,true
+2,65.983,60.6219,1.4854,283146,283146,true,true
+4,37.165,107.6269,2.6372,283146,283146,true,true
+8,38.665,103.4518,2.5349,283146,283010,true,false
+10,42.704,93.6687,2.2952,283146,283008,true,false

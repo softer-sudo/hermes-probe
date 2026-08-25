@@ -1,0 +1,20 @@
+{
+  "name": "hermes-probe",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal probe of JS runtime memory/GC behavior and worker_threads multithreading",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "memory": "npm run build && node --expose-gc dist/memory/run-node.js",
+    "threads": "npm run build && node dist/threads/benchmark.js",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "ES2019",
+    "module": "None",
+    "lib": ["ES2019"],
+    "outDir": "dist-hermes",
+    "rootDir": "src/memory/hermes",
+    "strict": true,
+    "skipLibCheck": true,
+    "sourceMap": false
+  },
+  "include": ["src/memory/hermes/**/*.ts"]
+}
