@@ -20,8 +20,29 @@ declare const HermesInternal:
 
 declare function print(...args: unknown[]): void;
 
+// Only needed for the fallback below (running this file under Node/ts-node
+// for local type-checking, not the real Hermes target which has `print` but
+// no `console`) - declared minimally here instead of pulling in @types/node,
+// which would defeat the point of tsconfig.hermes.json's `types: []`.
+declare const console: { log: (...args: unknown[]) => void } | undefined;
+
 const out: (...args: unknown[]) => void =
-  typeof print === "function" ? print : (console as unknown as { log: (...a: unknown[]) => void }).log;
+  typeof print === "function" ? print : typeof console !== "undefined" ? console.log : () => {};
+
+// Mirrors src/memory/gc.ts's forceGC() for the Node/V8 probe: some Hermes
+// hosts expose a global `gc()` for deterministic collection (analogous to
+// Node's `--expose-gc`), some don't. Guarded the same way `HermesInternal`
+// is above, so this degrades to a no-op instead of a ReferenceError when
+// unavailable.
+declare function gc(): void;
+
+function forceGC(): boolean {
+  if (typeof gc === "function") {
+    gc();
+    return true;
+  }
+  return false;
+}
 
 function statsAvailable(): boolean {
   return typeof HermesInternal !== "undefined" && typeof HermesInternal.getInstrumentedStats === "function";
@@ -60,6 +81,9 @@ function makeCycle(i: number): { a: CycleNode; b: CycleNode } {
   return { a, b };
 }
 
+// 100,000 rather than run-node.ts's 200,000: this file has no `process`, so
+// it can't read HERMES_PROBE_COUNT (or any env var) to match that default -
+// see the file header. Pass a different count by editing this constant.
 const COUNT = 100000;
 
 function arrayChurn(): void {
@@ -70,7 +94,9 @@ function arrayChurn(): void {
   }
   sample("array-churn", "peak-before-release");
   arr = [];
-  sample("array-churn", "after-release");
+  sample("array-churn", "after-release-pre-gc");
+  forceGC();
+  sample("array-churn", "after-release-post-gc");
 }
 
 function weakMapReferenceCycle(): void {
@@ -84,7 +110,9 @@ function weakMapReferenceCycle(): void {
   }
   sample("weakmap-cycle", "peak-before-release");
   holders = [];
-  sample("weakmap-cycle", "after-release");
+  sample("weakmap-cycle", "after-release-pre-gc");
+  forceGC();
+  sample("weakmap-cycle", "after-release-post-gc");
 }
 
 function mapReferenceCycleRetained(): void {
@@ -94,8 +122,16 @@ function mapReferenceCycleRetained(): void {
     registry.set(i, makeCycle(i));
   }
   sample("map-cycle-retained", "peak-still-referenced");
+  // Negative control (see patterns.ts): force a GC while the Map still
+  // references everything, to show it does NOT reclaim retained cycles.
+  // Without this, the pattern degenerates into a plain before/after-clear
+  // timing probe and can't demonstrate that invariant at all.
+  forceGC();
+  sample("map-cycle-retained", "post-gc-while-retained");
   registry.clear();
-  sample("map-cycle-retained", "after-explicit-clear");
+  sample("map-cycle-retained", "after-explicit-clear-pre-gc");
+  forceGC();
+  sample("map-cycle-retained", "after-explicit-clear-post-gc");
 }
 
 sample("baseline", "start");

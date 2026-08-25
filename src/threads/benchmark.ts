@@ -3,13 +3,27 @@ import * as os from "os";
 import * as path from "path";
 import * as fs from "fs";
 import { countPrimesInRange } from "./task";
+import { requirePositiveInt } from "../env";
+import { RESULT_ATOMIC_INDEX, RESULT_RACY_INDEX, RESULT_BUFFER_BYTES } from "./layout";
 
-const RANGE_END = Number(process.env.HERMES_PROBE_RANGE ?? 4_000_000);
-const CHUNK_SIZE = Number(process.env.HERMES_PROBE_CHUNK ?? 2_000);
+const RANGE_END = requirePositiveInt("HERMES_PROBE_RANGE", process.env.HERMES_PROBE_RANGE, 4_000_000);
+const CHUNK_SIZE = requirePositiveInt("HERMES_PROBE_CHUNK", process.env.HERMES_PROBE_CHUNK, 2_000);
 const WORKER_COUNTS = (process.env.HERMES_PROBE_WORKERS ?? "1,2,4,8,10")
   .split(",")
-  .map((s) => Number(s.trim()))
-  .filter((n) => n > 0);
+  .map((s) => s.trim())
+  .filter((s) => s.length > 0)
+  .map((s) => {
+    const n = Number(s);
+    if (!Number.isInteger(n) || n <= 0) {
+      console.error(`error: HERMES_PROBE_WORKERS must be a comma-separated list of positive integers, got invalid entry ${JSON.stringify(s)}`);
+      process.exit(1);
+    }
+    return n;
+  });
+if (WORKER_COUNTS.length === 0) {
+  console.error("error: HERMES_PROBE_WORKERS must contain at least one positive integer");
+  process.exit(1);
+}
 
 interface WorkerRunResult {
   workers: number;
@@ -28,16 +42,17 @@ function now(): number {
 
 function runWithWorkers(n: number): Promise<{ elapsedMs: number; atomicTotal: number; racyTotal: number }> {
   const cursorBuffer = new SharedArrayBuffer(4);
-  const resultBuffer = new SharedArrayBuffer(8);
+  const resultBuffer = new SharedArrayBuffer(RESULT_BUFFER_BYTES);
   const cursor = new Int32Array(cursorBuffer);
   const result = new Int32Array(resultBuffer);
   Atomics.store(cursor, 0, 0);
-  Atomics.store(result, 0, 0);
-  Atomics.store(result, 1, 0);
+  Atomics.store(result, RESULT_ATOMIC_INDEX, 0);
+  Atomics.store(result, RESULT_RACY_INDEX, 0);
 
   const workerPath = path.join(__dirname, "worker.js");
   const start = now();
 
+  const workers: Worker[] = [];
   const runs = Array.from(
     { length: n },
     () =>
@@ -45,6 +60,7 @@ function runWithWorkers(n: number): Promise<{ elapsedMs: number; atomicTotal: nu
         const worker = new Worker(workerPath, {
           workerData: { cursorBuffer, resultBuffer, rangeEnd: RANGE_END, chunkSize: CHUNK_SIZE },
         });
+        workers.push(worker);
         worker.once("error", reject);
         worker.once("exit", (code) => {
           if (code !== 0) reject(new Error(`worker exited with code ${code}`));
@@ -53,11 +69,19 @@ function runWithWorkers(n: number): Promise<{ elapsedMs: number; atomicTotal: nu
       })
   );
 
-  return Promise.all(runs).then(() => ({
-    elapsedMs: now() - start,
-    atomicTotal: Atomics.load(result, 0),
-    racyTotal: Atomics.load(result, 1),
-  }));
+  return Promise.all(runs)
+    .then(() => ({
+      elapsedMs: now() - start,
+      atomicTotal: Atomics.load(result, RESULT_ATOMIC_INDEX),
+      racyTotal: Atomics.load(result, RESULT_RACY_INDEX),
+    }))
+    .catch((err) => {
+      // One worker erroring/exiting non-zero must not leave its siblings
+      // running forever (they'd otherwise keep the process alive past the
+      // point the failure was already reported).
+      for (const w of workers) void w.terminate();
+      throw err;
+    });
 }
 
 function printTable(rows: WorkerRunResult[]): void {
