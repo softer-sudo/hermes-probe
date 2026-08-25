@@ -8,8 +8,9 @@ import {
   weakMapReferenceCycle,
   mapReferenceCycleRetained,
 } from "./patterns";
+import { requirePositiveInt } from "../env";
 
-const COUNT = Number(process.env.HERMES_PROBE_COUNT ?? 200_000);
+const COUNT = requirePositiveInt("HERMES_PROBE_COUNT", process.env.HERMES_PROBE_COUNT, 200_000);
 const t0 = Date.now();
 const samples: Sample[] = [];
 
